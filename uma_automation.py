@@ -207,12 +207,12 @@ class UmaAutomation:
                 logger.error(f"Error searching {template_name} in {directory}: {e}")
         return None
 
-    def find_and_tap_multi(self, template_name: str, max_attempts: int = 10, wait_after: float = 0.0, extra_dirs: Optional[list] = None) -> bool:
-        """Find and tap a template by searching multiple directories"""
+    def find_and_tap_multi(self, template_name: str, max_attempts: int = 10, wait_after: float = 0.0, extra_dirs: Optional[list] = None, threshold: float = 0.8) -> bool:
+        """Find and tap a template by searching multiple directories with a configurable threshold"""
         for attempt in range(max_attempts):
             screenshot_path = self.take_screenshot()
             try:
-                coords = self.find_template_multi(template_name, screenshot_path, 0.8, extra_dirs)
+                coords = self.find_template_multi(template_name, screenshot_path, threshold, extra_dirs)
                 if coords:
                     self.tap_coordinate(coords[0], coords[1])
                     if wait_after > 0:
@@ -279,8 +279,8 @@ class UmaAutomation:
         if not self.find_and_tap_multi("plus.png", max_attempts=10, wait_after=1.0):
             logger.error("Failed to find plus.png for manual choose")
             return False
-        # 2. Try to find following.png (5 attempts) and tap
-        if self.find_and_tap_multi("following.png", max_attempts=5, wait_after=0.2):
+        # 2. Try to find following.png (5 attempts) and tap (use 0.7 threshold)
+        if self.find_and_tap_multi("following.png", max_attempts=5, wait_after=0.2, threshold=0.7):
             logger.info("Found following.png and tapped successfully")
             return True
         # 3. If cannot find, run filter sequence
@@ -288,8 +288,8 @@ class UmaAutomation:
         if not self.run_filter_sequence():
             logger.error("Filter sequence failed")
             return False
-        # 4. After filter, try again; if still not found, stop
-        if self.find_and_tap_multi("following.png", max_attempts=5, wait_after=0.2):
+        # 4. After filter, try again with 0.7 threshold; if still not found, stop
+        if self.find_and_tap_multi("following.png", max_attempts=5, wait_after=0.2, threshold=0.7):
             logger.info("Found following.png after filter and tapped successfully")
             return True
         else:
@@ -439,23 +439,25 @@ class UmaAutomation:
                                        self.config["automation"]["wait_time"]["next"]):
                     logger.error("Failed to find Next button (first time)")
                     continue
+                self.wait(0.5)
                 
                 logger.info("Step 3: Finding and tapping Next button (second time)")
                 if not self.find_and_tap("next.png", self.config["automation"]["attempts"]["next"], 
                                        self.config["automation"]["wait_time"]["next"]):
                     logger.error("Failed to find Next button (second time)")
                     continue
+                self.wait(0.5)
                 
                 # Step 4: Find and press auto_select_1.png, find and tap ok
                 logger.info("Step 4: Finding and tapping Auto-Select 1, then OK")
                 if not self.find_and_tap("auto_select_1.png", 10):
                     logger.error("Failed to find Auto-Select 1 button")
                     continue
-                
+                self.wait(0.5)
                 if not self.find_and_tap("ok.png", 10):
                     logger.error("Failed to find OK button after Auto-Select 1")
                     continue
-
+                self.wait(0.5)
                 if not self.find_and_tap("next.png", 10):
                     logger.error("Failed to find Next button after OK button")
                     continue
@@ -523,7 +525,8 @@ class UmaAutomation:
                 if not self.find_and_tap("skip.png", 10):
                     logger.error("Failed to find Skip button")
                     continue
-
+                self.wait(0.5)
+                
                 # Step 10: Find and tap skip_btn.png
                 logger.info("Step 10: Finding and tapping Skip Button")
                 if not self.find_and_tap("skip_btn.png", 10):
