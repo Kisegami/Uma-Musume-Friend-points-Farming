@@ -399,11 +399,11 @@ class UmaAutomation:
             if not self.find_and_tap("ok.png", 10):
                 logger.error("Failed to find ok.png in TP Charge")
                 return False
-            self.wait(1)
+            self.wait(1.5)
 
             # Step 6: Find and tap close.png
             logger.info("TP Charge Step 6: Finding and tapping close.png")
-            if not self.find_and_tap("close.png", 10):
+            if not self.find_and_tap("close.png", 20):
                 logger.error("Failed to find close.png in TP Charge")
                 return False
             self.wait(0.5)
