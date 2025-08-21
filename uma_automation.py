@@ -228,6 +228,111 @@ class UmaAutomation:
         logger.error(f"Failed to find and tap {template_name} (multi) after {max_attempts} attempts")
         return False
 
+    def wait_and_tap_multi(self, template_name: str, timeout_seconds: float = 30.0, wait_after: float = 0.0, threshold: float = 0.8) -> tuple[bool, bool]:
+        """Wait until a template appears (up to timeout) and tap it.
+
+        Returns (tapped, restart_cycle). If timeout occurs, performs fallback
+        recovery (close/confirm → wait for home/menu) and returns (False, True)
+        to indicate the caller should restart the automation cycle.
+        """
+        logger.info(f"Waiting up to {timeout_seconds:.1f}s for {template_name}...")
+        start_ts = time.time()
+        while time.time() - start_ts < timeout_seconds:
+            screenshot_path = self.take_screenshot()
+            try:
+                coords = self.find_template_multi(template_name, screenshot_path, threshold)
+                if coords:
+                    self.tap_coordinate(coords[0], coords[1])
+                    if wait_after > 0:
+                        time.sleep(wait_after)
+                    return True, False
+            finally:
+                if os.path.exists(screenshot_path):
+                    os.remove(screenshot_path)
+            time.sleep(0.5)
+
+        logger.error(f"Timeout ({timeout_seconds:.1f}s) waiting for {template_name}")
+        self.recover_to_home_or_menu()
+        return False, True
+
+    def recover_to_home_or_menu(self):
+        """Fallback when a must-have step times out.
+
+        1) Try tapping close or confirm if visible
+        2) Then wait until either home or menu appears
+           - If home: tap it
+           - If menu: tap it, then give up sequence (give_up_1 → wait 0.5s → give_up_2)
+        """
+        logger.warning("Starting timeout recovery: trying close/confirm, then home/menu")
+
+        # Try to tap close or confirm once if visible
+        for candidate in ["close.png", "confirm.png"]:
+            screenshot_path = self.take_screenshot()
+            try:
+                coords = self.find_template_multi(candidate, screenshot_path, 0.8)
+                if coords:
+                    logger.info(f"Recovery: Found {candidate}, tapping")
+                    self.tap_coordinate(coords[0], coords[1])
+                    time.sleep(0.5)
+            finally:
+                if os.path.exists(screenshot_path):
+                    os.remove(screenshot_path)
+
+        # Now wait indefinitely until home appears, or menu appears when on a screen with Tazuna
+        while True:
+            screenshot_path = self.take_screenshot()
+            try:
+                coords_home = self.find_template_multi("home.png", screenshot_path, 0.8)
+                if coords_home:
+                    logger.info("Recovery: Found home.png, tapping to return home")
+                    self.tap_coordinate(coords_home[0], coords_home[1])
+                    time.sleep(1)
+                    break
+                # Only consider Menu path if we see Tazuna on screen
+                coords_tazuna = self.find_template_multi("tazuna.png", screenshot_path, 0.8)
+                if coords_tazuna:
+                    coords_menu = self.find_template_multi("menu.png", screenshot_path, 0.8)
+                    if coords_menu:
+                        logger.info("Recovery: Found tazuna.png and menu.png, executing give up sequence")
+                        self.tap_coordinate(coords_menu[0], coords_menu[1])
+                        time.sleep(0.5)
+                        # Give up flow
+                        self.find_and_tap_multi("give_up_1.png", max_attempts=10)
+                        time.sleep(0.5)
+                        self.find_and_tap_multi("give_up_2.png", max_attempts=10)
+                        time.sleep(1)
+                        break
+            finally:
+                if os.path.exists(screenshot_path):
+                    os.remove(screenshot_path)
+            time.sleep(1.0)
+
+    def wait_and_tap_menu_if_tazuna(self, timeout_seconds: float = 30.0) -> tuple[bool, bool]:
+        """Wait until both tazuna.png and menu.png are visible, then tap menu.
+
+        Returns (tapped, restart_cycle). On timeout, performs recovery and
+        signals the caller to restart the automation cycle.
+        """
+        logger.info(f"Waiting up to {timeout_seconds:.1f}s for tazuna.png + menu.png...")
+        start_ts = time.time()
+        while time.time() - start_ts < timeout_seconds:
+            screenshot_path = self.take_screenshot()
+            try:
+                coords_tazuna = self.find_template_multi("tazuna.png", screenshot_path, 0.8)
+                if coords_tazuna:
+                    coords_menu = self.find_template_multi("menu.png", screenshot_path, 0.8)
+                    if coords_menu:
+                        self.tap_coordinate(coords_menu[0], coords_menu[1])
+                        return True, False
+            finally:
+                if os.path.exists(screenshot_path):
+                    os.remove(screenshot_path)
+            time.sleep(0.5)
+
+        logger.error("Timeout waiting for tazuna.png + menu.png")
+        self.recover_to_home_or_menu()
+        return False, True
+
     def run_filter_sequence(self) -> bool:
         """Execute the filter sequence to locate Following list based on config preferences"""
         logger.info("Starting filter sequence")
@@ -425,7 +530,11 @@ class UmaAutomation:
                 
                 # Step 1: Find and Tap on Career.png
                 logger.info("Step 1: Finding and tapping Career button")
-                if not self.find_and_tap("Career.png", 10):
+                tapped, restart = self.wait_and_tap_multi("Career.png", timeout_seconds=30.0)
+                if restart:
+                    logger.info("Recovered to home/menu; restarting automation cycle")
+                    continue
+                if not tapped:
                     logger.error("Failed to find Career button, retrying...")
                     continue
                 
@@ -435,30 +544,56 @@ class UmaAutomation:
                 
                 # Step 3: Find next.png (10 attempts) and tap it, wait 1s. Do this again 1 time
                 logger.info("Step 3: Finding and tapping Next button (first time)")
-                if not self.find_and_tap("next.png", self.config["automation"]["attempts"]["next"], 
-                                       self.config["automation"]["wait_time"]["next"]):
+                tapped, restart = self.wait_and_tap_multi(
+                    "next.png",
+                    timeout_seconds=30.0,
+                    wait_after=self.config["automation"]["wait_time"]["next"]
+                )
+                if restart:
+                    logger.info("Recovered; restarting automation cycle")
+                    continue
+                if not tapped:
                     logger.error("Failed to find Next button (first time)")
                     continue
                 self.wait(0.5)
                 
                 logger.info("Step 3: Finding and tapping Next button (second time)")
-                if not self.find_and_tap("next.png", self.config["automation"]["attempts"]["next"], 
-                                       self.config["automation"]["wait_time"]["next"]):
+                tapped, restart = self.wait_and_tap_multi(
+                    "next.png",
+                    timeout_seconds=30.0,
+                    wait_after=self.config["automation"]["wait_time"]["next"]
+                )
+                if restart:
+                    logger.info("Recovered; restarting automation cycle")
+                    continue
+                if not tapped:
                     logger.error("Failed to find Next button (second time)")
                     continue
                 self.wait(0.5)
                 
                 # Step 4: Find and press auto_select_1.png, find and tap ok
                 logger.info("Step 4: Finding and tapping Auto-Select 1, then OK")
-                if not self.find_and_tap("auto_select_1.png", 10):
+                tapped, restart = self.wait_and_tap_multi("auto_select_1.png", timeout_seconds=30.0)
+                if restart:
+                    logger.info("Recovered; restarting automation cycle")
+                    continue
+                if not tapped:
                     logger.error("Failed to find Auto-Select 1 button")
                     continue
                 self.wait(0.5)
-                if not self.find_and_tap("ok.png", 10):
+                tapped, restart = self.wait_and_tap_multi("ok.png", timeout_seconds=30.0)
+                if restart:
+                    logger.info("Recovered; restarting automation cycle")
+                    continue
+                if not tapped:
                     logger.error("Failed to find OK button after Auto-Select 1")
                     continue
                 self.wait(0.5)
-                if not self.find_and_tap("next.png", 10):
+                tapped, restart = self.wait_and_tap_multi("next.png", timeout_seconds=30.0)
+                if restart:
+                    logger.info("Recovered; restarting automation cycle")
+                    continue
+                if not tapped:
                     logger.error("Failed to find Next button after OK button")
                     continue
                 self.wait(2)
@@ -478,7 +613,11 @@ class UmaAutomation:
                 
                 # Local loop for Steps 6-6.5 until no TP Charge is needed
                 while True:
-                    if not self.find_and_tap("start_career_1.png", 10):
+                    tapped, restart = self.wait_and_tap_multi("start_career_1.png", timeout_seconds=30.0)
+                    if restart:
+                        logger.info("Recovered; restarting automation cycle")
+                        continue
+                    if not tapped:
                         logger.error("Failed to find Start Career 1 button")
                         break  # Exit local loop and continue to next step
                     
@@ -512,7 +651,11 @@ class UmaAutomation:
                 
                 # Step 7: Find and tap start_career_2.png
                 logger.info("Step 7: Finding and tapping Start Career 2")
-                if not self.find_and_tap("start_career_2.png", 10):
+                tapped, restart = self.wait_and_tap_multi("start_career_2.png", timeout_seconds=30.0)
+                if restart:
+                    logger.info("Recovered; restarting automation cycle")
+                    continue
+                if not tapped:
                     logger.error("Failed to find Start Career 2 button")
                     continue
                 
@@ -522,14 +665,22 @@ class UmaAutomation:
                 
                 # Step 9: Find and tap skip.png
                 logger.info("Step 9: Finding and tapping Skip button")
-                if not self.find_and_tap("skip.png", 10):
+                tapped, restart = self.wait_and_tap_multi("skip.png", timeout_seconds=30.0)
+                if restart:
+                    logger.info("Recovered; restarting automation cycle")
+                    continue
+                if not tapped:
                     logger.error("Failed to find Skip button")
                     continue
                 self.wait(0.5)
                 
                 # Step 10: Find and tap skip_btn.png
                 logger.info("Step 10: Finding and tapping Skip Button")
-                if not self.find_and_tap("skip_btn.png", 10):
+                tapped, restart = self.wait_and_tap_multi("skip_btn.png", timeout_seconds=30.0)
+                if restart:
+                    logger.info("Recovered; restarting automation cycle")
+                    continue
+                if not tapped:
                     logger.error("Failed to find Skip Button")
                     continue
                 
@@ -586,7 +737,11 @@ class UmaAutomation:
                 
                 # Step 13: Find and tap confirm.png
                 logger.info("Step 12: Finding and tapping Confirm button")
-                if not self.find_and_tap("confirm.png", 10):
+                tapped, restart = self.wait_and_tap_multi("confirm.png", timeout_seconds=30.0)
+                if restart:
+                    logger.info("Recovered; restarting automation cycle")
+                    continue
+                if not tapped:
                     logger.error("Failed to find Confirm button")
                     continue
                 self.wait(1)
@@ -611,9 +766,13 @@ class UmaAutomation:
                     if os.path.exists(screenshot_path):
                         os.remove(screenshot_path)
                 
-                # Step 15: Find and tap menu.png
-                logger.info("Step 15: Finding and tapping Menu button")
-                if not self.find_and_tap("menu.png", 10):
+                # Step 15: Find and tap menu.png (only when tazuna.png is present)
+                logger.info("Step 15: Finding and tapping Menu button (requires tazuna.png)")
+                tapped, restart = self.wait_and_tap_menu_if_tazuna(timeout_seconds=30.0)
+                if restart:
+                    logger.info("Recovered; restarting automation cycle")
+                    continue
+                if not tapped:
                     logger.error("Failed to find Menu button")
                     continue
                 
@@ -621,8 +780,14 @@ class UmaAutomation:
                 logger.info("Step 16: Finding and tapping Give Up 1")
                 
                 # Infinite loop between steps 14.5 and 16 until step 16 succeeds
+                restart_cycle_after_16 = False
                 while True:
-                    if not self.find_and_tap("give_up_1.png", 5):
+                    tapped, restart_inner = self.wait_and_tap_multi("give_up_1.png", timeout_seconds=30.0)
+                    if restart_inner:
+                        logger.info("Recovered; restarting automation cycle")
+                        restart_cycle_after_16 = True
+                        break
+                    if not tapped:
                         logger.error("Failed to find Give Up 1 button, returning to step 14.5")
                         # Return to step 14.5: Check for additional Next button opportunities
                         logger.info("Returning to Step 14.5: Checking for additional Next button opportunities")
@@ -643,9 +808,14 @@ class UmaAutomation:
                         # After step 14.5, continue with step 15
                         logger.info("Continuing with Step 15 after step 14.5")
                         
-                        # Step 15: Find and tap menu.png
-                        logger.info("Step 15: Finding and tapping Menu button")
-                        if not self.find_and_tap("menu.png", 10):
+                        # Step 15: Find and tap menu.png (requires tazuna.png)
+                        logger.info("Step 15: Finding and tapping Menu button (requires tazuna.png)")
+                        tapped, restart_inner2 = self.wait_and_tap_menu_if_tazuna(timeout_seconds=30.0)
+                        if restart_inner2:
+                            logger.info("Recovered; restarting automation cycle")
+                            restart_cycle_after_16 = True
+                            break
+                        if not tapped:
                             logger.error("Failed to find Menu button")
                             continue
                         
@@ -657,9 +827,17 @@ class UmaAutomation:
                         logger.info("Step 16 succeeded, proceeding to Step 17")
                         break
                 
+                # If recovery requested inside step 16, restart main cycle now
+                if restart_cycle_after_16:
+                    continue
+
                 # Step 17: Find and tap give_up_2.png
                 logger.info("Step 17: Finding and tapping Give Up 2")
-                if not self.find_and_tap("give_up_2.png", 5):
+                tapped, restart = self.wait_and_tap_multi("give_up_2.png", timeout_seconds=30.0)
+                if restart:
+                    logger.info("Recovered; restarting automation cycle")
+                    continue
+                if not tapped:
                     logger.error("Failed to find Give Up 2 button")
                     continue
                 

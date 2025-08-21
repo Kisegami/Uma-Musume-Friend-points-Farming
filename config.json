@@ -10,7 +10,7 @@
       "next": 0.5,
       "start_career": 1,
       "skip": 1,
-      "confirm": 5,
+      "confirm": 15,
       "loop": 5
     },
     "attempts": {
