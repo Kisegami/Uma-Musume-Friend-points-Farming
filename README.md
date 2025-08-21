@@ -60,7 +60,7 @@ This automation script is specifically designed for **emulators** and performs a
 
 ## ⚙️ Configuration
 
-Edit `config.json` to customize the automation:
+Edit `config.json` to customize the automation (example below matches the defaults in this repo):
 
 ```json
 {
@@ -71,9 +71,9 @@ Edit `config.json` to customize the automation:
   },
   "automation": {
     "wait_time": {
-      "career": 10,
-      "next": 1,
-      "start_career": 2,
+      "career": 5,
+      "next": 0.5,
+      "start_career": 1,
       "skip": 1,
       "confirm": 5,
       "loop": 5
@@ -81,6 +81,11 @@ Edit `config.json` to customize the automation:
     "attempts": {
       "next": 10,
       "next_check": 5
+    },
+    "manual_choose": true,
+    "filter": {
+      "rarity": "SSR",
+      "speciality": "Speed"
     },
     "coordinates": {
       "tap_after_skip": [249, 948]
@@ -91,10 +96,26 @@ Edit `config.json` to customize the automation:
 
 ### Configuration Options
 
-- **`device_address`**: Your emulator's ADB connection address (default: 127.0.0.1:16416 or 7555 for Mumu)
-- **`wait_time`**: Customizable delays for different operations
-- **`attempts`**: Number of retry attempts for finding elements
-- **`coordinates`**: Fixed screen coordinates for 1080x1920 resolution
+- **adb.device_address**: Emulator ADB address. For Mumu, common values are `127.0.0.1:16416` (or sometimes `127.0.0.1:7555`).
+- **adb.screenshot_path**: Local folder where temporary screenshots are stored.
+- **adb.template_path**: Folder containing template images for buttons (default: `assets/buttons`).
+
+- **automation.wait_time.career**: Delay after tapping `Career.png` before proceeding (seconds). Default: 5.
+- **automation.wait_time.next**: Delay after tapping `next.png` (seconds). Default: 0.5.
+- **automation.wait_time.start_career**: Delay after starting career (seconds). Default: 1.
+- **automation.wait_time.skip**: Delay before/after skip interactions (seconds). Default: 1.
+- **automation.wait_time.confirm**: Wait after confirming (seconds). Default: 5.
+- **automation.wait_time.loop**: Wait at the end of each cycle (seconds). Default: 5.
+
+- **automation.attempts.next**: Attempts to find `next.png` in main steps. Default: 10.
+- **automation.attempts.next_check**: Attempts used in conditional Next checks (step 14.5). Default: 5.
+
+- **automation.manual_choose**: If true, enables the manual choosing flow at step 5 (plus → following → filter). If false, step 5 is skipped and selection is handled automatically by the game.
+
+- **automation.filter.rarity**: Rarity used in filter sequence. Accepted values: `R`, `SR`, `SSR`. Default: `SSR`.
+- **automation.filter.speciality**: Speciality used in filter sequence. Accepted values: `SPEED`, `STAMINA`, `POWER`, `GUTS`, `WIT`, `PAL`. Example: `Speed` in config will be normalized to `SPEED`.
+
+- **automation.coordinates.tap_after_skip**: Fixed tap coordinate used after skip interactions. Coordinates are for 1080x1920 portrait. Default: `[249, 948]`.
 
 ## 🔧 Setup Instructions
 
