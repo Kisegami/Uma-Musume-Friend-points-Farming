@@ -17,6 +17,11 @@
       "next": 10,
       "next_check": 5
     },
+    "manual_choose": true,
+    "filter": {
+      "rarity": "SSR",
+      "speciality": "Speed"
+    },
     "coordinates": {
       "tap_after_skip": [249, 948]
     }

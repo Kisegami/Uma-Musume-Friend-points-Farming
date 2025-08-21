@@ -174,6 +174,127 @@ class UmaAutomation:
         
         logger.error(f"Failed to find and tap {template_name} after {max_attempts} attempts")
         return False
+
+    def find_template_multi(self, template_name: str, screenshot_path: str, threshold: float = 0.8, extra_dirs: Optional[list] = None) -> Optional[Tuple[int, int]]:
+        """Find template by checking primary template path and optional extra directories"""
+        if extra_dirs is None:
+            extra_dirs = [os.path.join("assets", "image")]
+        # First try primary buttons directory
+        coords = self.find_template(template_name, screenshot_path, threshold)
+        if coords:
+            return coords
+        # Then try each extra directory
+        for directory in extra_dirs:
+            template_file = os.path.join(directory, template_name)
+            if not os.path.exists(template_file):
+                continue
+            try:
+                screenshot = cv2.imread(screenshot_path)
+                template = cv2.imread(template_file)
+                if screenshot is None or template is None:
+                    continue
+                screenshot_gray = cv2.cvtColor(screenshot, cv2.COLOR_BGR2GRAY)
+                template_gray = cv2.cvtColor(template, cv2.COLOR_BGR2GRAY)
+                result = cv2.matchTemplate(screenshot_gray, template_gray, cv2.TM_CCOEFF_NORMED)
+                min_val, max_val, min_loc, max_loc = cv2.minMaxLoc(result)
+                if max_val >= threshold:
+                    h, w = template_gray.shape
+                    center_x = max_loc[0] + w // 2
+                    center_y = max_loc[1] + h // 2
+                    logger.info(f"Found {template_name} in {directory} at ({center_x}, {center_y}) with confidence {max_val:.3f}")
+                    return (center_x, center_y)
+            except Exception as e:
+                logger.error(f"Error searching {template_name} in {directory}: {e}")
+        return None
+
+    def find_and_tap_multi(self, template_name: str, max_attempts: int = 10, wait_after: float = 0.0, extra_dirs: Optional[list] = None) -> bool:
+        """Find and tap a template by searching multiple directories"""
+        for attempt in range(max_attempts):
+            screenshot_path = self.take_screenshot()
+            try:
+                coords = self.find_template_multi(template_name, screenshot_path, 0.8, extra_dirs)
+                if coords:
+                    self.tap_coordinate(coords[0], coords[1])
+                    if wait_after > 0:
+                        time.sleep(wait_after)
+                    return True
+                else:
+                    logger.warning(f"Attempt {attempt + 1}/{max_attempts}: {template_name} not found (multi)")
+                    if attempt < max_attempts - 1:
+                        time.sleep(1)
+            finally:
+                if os.path.exists(screenshot_path):
+                    os.remove(screenshot_path)
+        logger.error(f"Failed to find and tap {template_name} (multi) after {max_attempts} attempts")
+        return False
+
+    def run_filter_sequence(self) -> bool:
+        """Execute the filter sequence to locate Following list based on config preferences"""
+        logger.info("Starting filter sequence")
+        # 3.1 Tap Filter button
+        self.tap_coordinate(747, 1623)
+        time.sleep(0.5)
+        # 3.2 Tap to open sorting/filter options
+        self.tap_coordinate(786, 203)
+        time.sleep(0.5)
+        # 3.3 Tap on Rarity and Speciality based on config
+        filter_config = self.config.get("automation", {}).get("filter", {})
+        rarity_choice = str(filter_config.get("rarity", "SSR")).upper()
+        speciality_choice = str(filter_config.get("speciality", "POWER")).upper()
+        rarity_coords = {
+            "R": (102, 408),
+            "SR": (437, 414),
+            "SSR": (777, 410),
+        }
+        speciality_coords = {
+            "SPEED": (102, 627),
+            "STAMINA": (444, 623),
+            "POWER": (786, 618),
+            "GUTS": (109, 741),
+            "WIT": (442, 732),
+            "PAL": (777, 731),
+        }
+        if rarity_choice not in rarity_coords:
+            logger.error(f"Unknown rarity selection: {rarity_choice}")
+            return False
+        if speciality_choice not in speciality_coords:
+            logger.error(f"Unknown speciality selection: {speciality_choice}")
+            return False
+        self.tap_coordinate(*rarity_coords[rarity_choice])
+        time.sleep(0.2)
+        self.tap_coordinate(*speciality_coords[speciality_choice])
+        time.sleep(0.2)
+        # 3.4 Tap OK
+        if not self.find_and_tap("ok.png", 10):
+            logger.error("Failed to confirm filter (OK not found)")
+            return False
+        time.sleep(0.5)
+        logger.info("Filter sequence completed")
+        return True
+
+    def manual_choose_friend(self) -> bool:
+        """Manually choose a friend using plus and following with optional filter sequence"""
+        logger.info("Starting manual choose friend sequence")
+        # 1. Find and tap plus.png, wait 1s
+        if not self.find_and_tap_multi("plus.png", max_attempts=10, wait_after=1.0):
+            logger.error("Failed to find plus.png for manual choose")
+            return False
+        # 2. Try to find following.png (5 attempts) and tap
+        if self.find_and_tap_multi("following.png", max_attempts=5, wait_after=0.2):
+            logger.info("Found following.png and tapped successfully")
+            return True
+        # 3. If cannot find, run filter sequence
+        logger.info("following.png not found, running filter sequence")
+        if not self.run_filter_sequence():
+            logger.error("Filter sequence failed")
+            return False
+        # 4. After filter, try again; if still not found, stop
+        if self.find_and_tap_multi("following.png", max_attempts=5, wait_after=0.2):
+            logger.info("Found following.png after filter and tapped successfully")
+            return True
+        else:
+            logger.error("following.png not found after filter; stopping automation")
+            return False
     
     def find_use_buttons_with_brightness_filter(self, screenshot_path: str, brightness_threshold: int = 170) -> list:
         """Find all use.png buttons and filter by brightness, returning unique coordinates"""
@@ -278,13 +399,14 @@ class UmaAutomation:
             if not self.find_and_tap("ok.png", 10):
                 logger.error("Failed to find ok.png in TP Charge")
                 return False
-            self.wait(0.5)
+            self.wait(1)
 
             # Step 6: Find and tap close.png
             logger.info("TP Charge Step 6: Finding and tapping close.png")
             if not self.find_and_tap("close.png", 10):
                 logger.error("Failed to find close.png in TP Charge")
                 return False
+            self.wait(0.5)
             
             logger.info("TP Charge process completed successfully")
             return True
@@ -339,15 +461,15 @@ class UmaAutomation:
                     continue
                 self.wait(2)
                 
-                # Step 5: Find and press auto_select_2.png, find and tap ok
-                logger.info("Step 5: Finding and tapping Auto-Select 2, then OK")
-                if not self.find_and_tap("auto_select_2.png", 10):
-                    logger.error("Failed to find Auto-Select 2 button")
-                    continue
-                
-                if not self.find_and_tap("ok.png", 10):
-                    logger.error("Failed to find OK button after Auto-Select 2")
-                    continue
+                # Step 5: Manual choosing is optional; default is automatic by the game
+                manual_choose_enabled = self.config.get("automation", {}).get("manual_choose", False)
+                if manual_choose_enabled:
+                    logger.info("Step 5: Manual choose enabled - running manual selection sequence")
+                    if not self.manual_choose_friend():
+                        logger.error("Manual choose failed; stopping automation as requested")
+                        break
+                else:
+                    logger.info("Step 5: Skipping - selection handled automatically by the game")
                 
                 # Step 6: Find and tap start_career_1.png and handle TP Charge if needed
                 logger.info("Step 6: Finding and tapping Start Career 1")
